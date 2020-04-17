@@ -1,0 +1,339 @@
+---
+title: "Academic Probation, Attrition, Future Performance and Gender in Canadian Post-Secondary Education"
+author: "Evan Moir"
+date: "15/04/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE)
+```
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(rdrobust)
+```
+
+## Abstract
+
+This is an R Markdown document. 
+
+## Introduction
+
+Students in many post-secondary education institutions are placed on academic probation when they fail to keep up a certain level of academic performance.
+
+## Conceptual Background
+
+Academic probation is a status given to students at post-secondary institutions who are not maintaining a certain level of academic performance. It is widely used in North American educational institutions. The arguments in favour of the use of academic probation are that it communicates to students the seriousness of their current academic standing, and gives them a status that may allow them access to additional help. However, it's also possible that the official nature of the probationary status adds extra pressure to an alread-struggling student. So the question of the effects of academic probation are of interest to institutions as they seek to promote continued enrolment, imporved academic performance, and later student success. 
+
+The possible psychological effects, gaming effects, and change in available resources on either side of the probation cutoff threshold make ths a potentially fruitful 
+
+Attrition and its complementary concept retention are used by institutions to understand which students are failing to progress beyond first year. It's defined as the rate at which first year students do not return for second yer. By looking for trends in the student populations with higher attrition rates, institutions may be able to lower those rates with broad or targeted initiative meant to ensure that the conditions are in place for students to progres beyond first year. Completing first year increasing the odds that a student will eventually graduate, which is good for the institution (higher graduate numbers, likely higher student success rate, and higher revenues) and presumably good for the student as well. Attrition can happen for many reasons, only some of which are within the control of the institution. 
+
+## The Dataset
+
+```{r load_data, include=FALSE}
+# load data
+full_dataset <- read.csv("CIT_2019_Cambridge_education.csv")
+
+# rename variables and drop NAs
+full_dataset[full_dataset == ""] <- NA
+full_dataset[full_dataset == "N/A"] <- NA
+names(full_dataset)[names(full_dataset) == "T"] <- "prob"
+full_dataset<- drop_na(full_dataset, X, left_school, prob, nextGPA, nextGPA_nonorm, hsgrade_pct, age_at_entry, male, english, clustervar)
+```
+
+The chosen dataset of 44,362 rows is administrative data from a Canadian University. The data is at the student level and was collected between 1996 and 2005. The data includes variables describing:
+
+* registration status
+* 1st year GPA minus academic probation cutoff GPA
+* 2nd year GPA minus academic probation cutoff GPA
+* academic standing (i.e. probation status)
+* gender
+* age
+* first language
+* high school average
+
+As shown in figure 1, the original dataset was heavily weighted in favour of students below the cutoff. It's not clear if this represented all students in the intended sample, or if the dataset was intentionally constructed in this way. 
+
+```{r hist1, echo=FALSE, fig.height=3, include=TRUE}
+full_dataset %>%
+  ggplot() +
+  geom_histogram(aes(x = X), binwidth = 0.1, alpha = 0.85) +
+  labs(
+    title = "Figure 1: Frequency distribution by 1st year GPA minus probation cutoff",
+    x = "1st year GPA minus probation cutoff (bin 0.1)",
+    y = "Frequency Cont"
+    ) +
+  theme_minimal()
+```
+
+## Research Question & Method
+
+The general research question posed in this report is: how do the outcome of students placed on academic probation differ from those who are not? The outcomes of interest can be described through the following questions:
+
+* Which students return for second year? (Retention / attrition)
+* Do returning students see a change in their academic performance in second year?
+
+Regression discontinuity (RD) will be used to explore how students on either side of the threshold respond in the areas of interest above. Both questions will be viewed through the lens of gender, i.e. do men and women differ on each side of the discontinuity threshold. 
+
+### Establishing Existence of Discontinuity
+
+If the intention is to use RD for analysis, it should be shown that there's an appropriate threshold that can be identified as a discontinuity. In this case, the discontinuity is the academic standing status (i.e. on academic probation, or not). Figure X shows that the academic standing is as expected on wither side of the discontinuit.
+
+```{r probation_status, echo=FALSE, fig.height=3, include=TRUE}
+full_dataset %>%
+  ggplot(aes(x = X, y = prob)) +
+  geom_point(alpha = 0.85) +
+  labs(
+    title = "Figure 2: Probation status by 1st year GPA minus probation cutoff",
+    x = "Difference from academic probation cutoff (GPA)",
+    y = "Exempt from academic probation") +
+  theme_minimal()
+```
+
+## Data Preprocessing
+
+The data was filtered to a band around the GPA cutoff of 1.2 points in both directios. This effectively removed failing students, and very high performing students. The resulting dataset contained 25,389 observations. The resulting frequency distribution is much more symetric around the cutoff.
+
+```{r filter, include=FALSE, echo=FALSE}
+filter_data <- filter(full_dataset, full_dataset$X >= -1.2 & full_dataset$X <= 1.2)
+```
+
+```{r post_filter_hist, echo=FALSE, fig.height=3, include=TRUE}
+filter_data %>%
+  ggplot() +
+  geom_histogram(aes(x = X), binwidth = 0.1, alpha = 0.85) +
+  labs(
+    title = "Figure 3: Frequency distribution by 1st year GPA minus probation cutoff",
+    x = "1st year GPA minus probation cutoff (bin 0.1)",
+    y = "Frequency Cont"
+    ) +
+  theme_minimal()
+```
+
+Since gender is of interest, it's important to show that there are significant numbers of both genders in the filtered dataset:
+
+```{r gender_plot, echo=FALSE, fig.height=3, include=TRUE}
+filter_data %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = male)) +
+  labs(
+    title = "Figure 4: Gender distribution in filtered data",
+    x = "Male",
+    y = "Frequency Count"
+  ) +
+  theme_minimal()
+```
+
+To prepare the data for plotting and analysis, it was binned along by the "GPA minus probation cutoff" variable in increments of 0.1. The average "GPA minus probation cutoff" in each bin was then used as the basis for plotting (on the X axis in the plots to follow). the approrpiate value of interest (eg. attrition rate) was then calculated on the data in each bin for plotting on the Y axis. 
+
+```{r gpa_diff_prep, include=FALSE}
+neg_GPA_diff <- filter(filter_data, X < 0)
+pos_GPA_diff <- filter(filter_data , X > 0)
+
+neg_breaks <- c(-1.2, -1.1, -1.0, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0)
+pos_breaks <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.0)
+
+neg_cut <- cut(neg_GPA_diff$X, breaks = neg_breaks, right = FALSE)
+pos_cut <- cut(pos_GPA_diff$X, breaks = pos_breaks, right = TRUE)
+
+neg_GPA_diff <- mutate(neg_GPA_diff, bin = neg_cut)
+pos_GPA_diff <- mutate(pos_GPA_diff, bin = pos_cut)
+
+neg_counts <- neg_GPA_diff %>% group_by(bin) %>% summarise(n_rows = length(bin))
+neg_means <- neg_GPA_diff %>% group_by(bin) %>% summarise(means = mean(X))
+neg_data <- left_join(neg_counts, neg_means, by = c("bin" = "bin"))
+
+pos_counts <- pos_GPA_diff %>% group_by(bin) %>% summarise(n_rows = length(bin))
+pos_means <- pos_GPA_diff %>% group_by(bin) %>% summarise(means = mean(X))
+pos_data <- left_join(pos_counts, pos_means, by = c("bin" = "bin"))
+
+plot_data <- union(neg_data, pos_data)
+```
+
+## Analysis & Discussion
+
+### Attrition
+
+Figure 6 shows attrition rate for groups on both sides of the probation cutoff threshold, in an attempt to answer the question of whether being put on academic probation has an effect on attrition rate. A LOESS regression is used on the negative GPA minus cutoff values because the variation of the point coordinates made linear regression unsuitable. This result communicates two things clearly: students with lower GPAs show higher attrition rates, and there is minimal difference in attrition between the two groups around the threshold. 
+
+```{r cont_of_study, echo=FALSE, include=FALSE}
+# continuation of studies - general
+
+cont_neg_left_rate <- neg_GPA_diff %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+cont_neg <- left_join(neg_means, cont_neg_left_rate, by = c("bin" = "bin"))
+
+cont_pos_left_rate <- pos_GPA_diff %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+cont_pos <- left_join(pos_means, cont_pos_left_rate, by = c("bin" = "bin"))
+
+cont_data <- union(cont_neg, cont_pos)
+```
+
+```{r cont_of_study_plot, echo=FALSE, fig.height=3, include=TRUE}
+cont_data %>%
+  ggplot(aes(x = means, y = left_rate)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(data = cont_data %>% filter(means < 0), method = "loess", color = "black") +
+  geom_smooth(data = cont_data %>% filter(means > 0), method = "lm", color = "black") +
+  labs(
+    title = "Figure 6: Attrition Rate by s1t year GPA minus probation cutoff",
+    x = "1st Year GPA minus probation cutoff",
+    y = "Attrition Rate"
+  ) +
+  theme_minimal()
+```
+
+Figure 7 splits this into male and female plots, with LOESS regressions used on both sides for both genders. The results indicate that, in addition to the general trend of lower GPA leading to higher attrition rate, males have a higher attrition rate across the range of GPAs. There appears to be some discontinuity effect at the threshold with the male data, with the best fit line actually being lower on the negative side of the threshold - but the size of the error region makes it difficult to sy this is conclusive. 
+
+```{r cont_of_study_gender, echo=FALSE, include=FALSE}
+# continuation of studies - gender
+
+neg_GPA_diff_male <- filter(neg_GPA_diff, male == 1)
+pos_GPA_diff_male <- filter(pos_GPA_diff, male == 1)
+neg_GPA_diff_female <- filter(neg_GPA_diff, male == 0)
+pos_GPA_diff_female <- filter(pos_GPA_diff, male == 0)
+
+cont_neg_male_left_rate <- neg_GPA_diff_male %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+cont_neg_female_left_rate <- neg_GPA_diff_female %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+cont_pos_male_left_rate <- pos_GPA_diff_male %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+cont_pos_female_left_rate <- pos_GPA_diff_female %>% group_by(bin) %>% summarise(left_rate = mean(left_school))
+
+cont_neg_male <- left_join(neg_means, cont_neg_male_left_rate, by = c("bin" = "bin"))
+cont_neg_female <- left_join(neg_means, cont_neg_female_left_rate, by = c("bin" = "bin"))
+cont_pos_male <- left_join(pos_means, cont_pos_male_left_rate, by = c("bin" = "bin"))
+cont_pos_female <- left_join(pos_means, cont_pos_female_left_rate, by = c("bin" = "bin"))
+
+cont_male <- union(cont_neg_male, cont_pos_male)
+cont_female <- union(cont_neg_female, cont_pos_female)
+
+cont_male <- mutate(cont_male, male = 1)
+cont_female <- mutate(cont_female, male = 0)
+cont_data_gender <- union(cont_male, cont_female)
+```
+
+```{r cont_of_study_gender_plot, echo=FALSE, fig.height=3, include=TRUE}
+cont_data_gender %>%
+  ggplot(aes(x = means, y = left_rate)) +
+  geom_point(data = cont_data_gender %>% filter(male == 1), alpha = 0.6, color = "blue", shape = "circle") +
+  geom_point(data = cont_data_gender %>% filter(male == 0), alpha = 0.6, color = "red", shape = "triangle") +
+  geom_smooth(data = cont_data_gender %>% filter(means < 0 & male == 1), method = "loess", color = "blue") +
+  geom_smooth(data = cont_data_gender %>% filter(means > 0 & male == 1), method = "loess", color = "blue") +
+  geom_smooth(data = cont_data_gender %>% filter(means < 0 & male == 0), method = "loess", color = "red") +
+  geom_smooth(data = cont_data_gender %>% filter(means > 0 & male == 0), method = "loess", color = "red") +
+  labs(
+    title = "Figure 7: Attrition Rate by 1st year GPA minus probation cutoff",
+    x = "1st Year GPA minus probation cutoff",
+    y = "Attrition Rate"
+  ) +
+  theme_minimal()
+```
+
+### Performance Change
+
+Figure 8 shows 1st year GPA minus probation cutoff values by 1st year GPA minus probation cutoff values for the filtered dataset in an attempt to answer the question of whether being put on academic probation in first year leads to improved performance in seond year. Linear regression is used to model both sides of the threshold, as the reationship appears quite linear. 
+
+```{r performance_change, include=FALSE, echo=FALSE}
+# Performance Change 1 (nextGPA)
+
+pc_neg_nextGPA <- neg_GPA_diff %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+pc_neg <- left_join(neg_means, pc_neg_nextGPA, by = c("bin" = "bin"))
+
+pc_pos_nextGPA <- pos_GPA_diff %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+pc_pos <- left_join(pos_means, pc_pos_nextGPA, by = c("bin" = "bin"))
+
+pc_data <- union(pc_neg, pc_pos)
+```
+
+```{r performance_change_plot, echo=FALSE, fig.height=3, include=TRUE}
+pc_data %>%
+  ggplot(aes(x = means, y = mean_nextGPA)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(data = pc_data %>% filter(means < 0), method = "lm", color = "black") +
+  geom_smooth(data = pc_data %>% filter(means > 0), method = "lm", color = "black") +
+  labs(
+    title = "Figure 8: 2nd year GPA / 1st year GPA (minus cutoff)",
+    x = "1st year GPA minus probation cutoff",
+    y = "2nd year GPA minus probation cutoff"
+    ) +
+  theme_minimal()
+```
+
+The results appear to show a trend to wards higher 2nd year GPAs for lower first year GPAs, which is somewhat unintuitive (one might  expect higher 1st year GPAs to correlate with higher 2nd year GPAs in general), but possible. However, there is also a very clear threshold effect - students just below the threshold have a lower GPA than those just above the threshold. The data is highly linear here, so there is very little error and no overlap in the error regions immediately adjacent to the threshold.
+
+Figure 9 shows the same data, but split by gender.
+
+```{r perf_gender, echo=FALSE, include=FALSE}
+# Performance change - Gender
+pc_neg_male_nextGPA     <- neg_GPA_diff_male %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+pc_pos_male_nextGPA     <- pos_GPA_diff_male %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+pc_neg_female_nextGPA   <- neg_GPA_diff_female %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+pc_pos_female_nextGPA   <- pos_GPA_diff_female %>% group_by(bin) %>% summarise(mean_nextGPA = mean(nextGPA))
+
+
+pc_neg_male             <- left_join(neg_means, pc_neg_male_nextGPA, by = c("bin" = "bin"))
+pc_pos_male             <- left_join(pos_means, pc_pos_male_nextGPA, by = c("bin" = "bin"))
+pc_male                 <- union(pc_neg_male, pc_pos_male)
+pc_male                 <- mutate(pc_male, male = 1)
+        
+pc_neg_female           <- left_join(neg_means, pc_neg_female_nextGPA, by = c("bin" = "bin"))
+pc_pos_female           <- left_join(pos_means, pc_pos_female_nextGPA, by = c("bin" = "bin"))
+pc_female               <- union(pc_neg_female, pc_pos_female)
+pc_female               <- mutate(pc_female, male = 0)
+
+pc_gender               <- union(pc_male, pc_female)
+```
+
+```{r perf_gender_plot, echo=FALSE, fig.height=3, include=TRUE}
+pc_gender %>%
+  ggplot(aes(x = means, y = mean_nextGPA)) +
+  geom_point(data = pc_gender %>% filter(male == 1), alpha = 0.6, color ="blue", shape = "circle") +
+  geom_point(data = pc_gender %>% filter(male == 0), alpha = 0.6, color ="red", shape = "triangle") +
+  geom_smooth(data = pc_gender %>% filter(means < 0 & male == 1), method = "lm", color = "blue") +
+  geom_smooth(data = pc_gender %>% filter(means > 0 & male == 1), method = "lm", color = "blue") +
+  geom_smooth(data = pc_gender %>% filter(means < 0 & male == 0), method = "lm", color = "red") +
+  geom_smooth(data = pc_gender %>% filter(means > 0 & male == 0), method = "lm", color = "red") +
+  labs(
+    title = "Figure 9:Figure 8: 2nd year GPA / 1st year GPA (minus cutoff)",
+    x = "1st year GPA minus probation cutoff",
+    y = "2nd year GPA minus probation cutoff"
+  ) +
+  theme_minimal()
+```
+
+This shows a similar trend, though the errors are larger here so it's less conclusive. It also shows that women have a higher GPA in general, which is entirely possible.
+
+## Discussion
+
+It became clear while performing this analysis that the question of whether academic probation affects attrition rates would be better answered by having a control group that's not put on probation. While the results above do show an discontinuous increase in attrition rate on the negative side of the threshold for the sample as a whole, the error ranges are large enough that this is inconclusive. Likewise for the gendered attrition rates - it's not possible to conclude that there are significant threshold effects.
+
+The results found for performance change were somewhat unitutive, but for the sample as a whole there was a clear threshold effect where the students immediately on the negative side of threshold had a lower GPA than thoseimmediately on its positive side.
+
+What could cause such an effect? Possibly the psycholigical effects alluded to in the introduction, e.g. the status of "probation" can affect a student's confidence or motivation. If additional availability of resources (e.g. academic counseling, tutoring) or increased motivation were the dominant effect, one would expect higher GPAs on the negative side of the threshold. 
+
+More study is needed to understand the causes behind the observed effect. 
+
+\newpage
+
+## Ethical Considerations
+
+There are a few motivations behind the desire on the part of post-secondary institutions to better understand the effect of academic probation. They can be broken int otwo categories: serving the interests of the students, serving the interests of the institution. (These interests undoubtedly overlap, but not entirely.) These institutions are large, complex organizations whose different members have differing motivations. It is likely simultaneously true that some individuals are primarily concerned with the interests of the students, while others are more concerned with the interests of the institution.
+
+This partial divergence of interests is mentioned because it may be the case that academic probation, and analyses of it, may be used in ways that do not work in the interest of every individual student (or even populations of students). Though this analysis was concerned with a Canadian insitution, this is of partial concern in private education systems in other countries, where the profit motive further distorts institutions' incentives.
+
+Regarding the use of gender, so long as the data is being anonymized, the most pressing potential ethical issues lie in the response to attrition and continued poor performance. If an analysis such as this leads to institutions prioritizing the needs of one gender over in other in supporting students on academic probation, they must be very certain that the analysis used was done in a rigorous way to ensure the reallocation of resources is fully justified. 
+
+\newpage
+
+## References
+
+* [Ability, Gender, and Performance Standards: Evidence from Academic Probation](https://www.aeaweb.org/articles?id=10.1257/app.2.2.95). Jason M. Lindo, Nicholas J. Sanders, Philip Oreopoulos.
+* Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source Software, 4(43), 1686, https://doi.org/10.21105/joss.01686
+* Sebastian Calonico, Matias D. Cattaneo, Max H. Farrell and Rocio Titiunik (2020). rdrobust: Robust Data-Driven Statistical Inference in Regression-Discontinuity Designs. R package version 0.99.6. https://CRAN.R-project.org/package=rdrobust
+
+## Appendix
+
+For full code, see Github repository:
+
+[INF2178 Problem Set 5]()
+
